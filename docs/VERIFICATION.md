@@ -10,3 +10,11 @@ Local checks:
 All test data is synthetic. No existing Workwork database or account was used. Provider calls are mocked; no live model key is configured.
 
 Public smoke and restart checks are recorded after deployment below.
+
+## Public Railway checks
+
+Deployment `7cafb8a8-911c-4882-b679-1fbae60bbf1f` succeeded. Public smoke tests passed for HTTPS health, empty-company signup, Secure/HttpOnly/SameSite cookies, tenant isolation, member invitation/join, draft privacy, authorized launch, member response, manager follow-up, updated unknown status, duplicate response rejection, response history and owner decision.
+
+Redeployment `0efc295f-f52e-48a1-a8c7-c3d626396060` succeeded. A second check confirmed the same companies, member account, sessions, question plan, two answer revisions and decision survived. Login after restart also succeeded. Two clearly named synthetic verification companies remain in the new database; their randomized test credentials are not committed or shared.
+
+The public landing page and account-free sample were checked in the browser. The original Workwork Cloud checkout remained clean at `ac19178f55351d720585a9f9f61c67b616ed849a`. No original service deployment was changed.
