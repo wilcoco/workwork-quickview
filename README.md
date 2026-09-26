@@ -84,6 +84,8 @@ Commercial rollout needs observed repeat use and buyer commitment, plus operatio
 
 ## Planning and contracts
 
+- [Platform strategy](docs/PRODUCT-STRATEGY.md): how Quick View and the durable Workwork evidence foundation fit together; synchronization is not yet implemented.
+
 - [Concept and viability review](docs/CONCEPT-AND-VIABILITY-REVIEW.md): market overlap, evidence limits and product hypotheses.
 - [Pilot and commercial plan](docs/PILOT-AND-COMMERCIAL-PLAN.md): the initial workflow, proposed validation gates and packaging hypotheses.
 - [Product contract](docs/PRODUCT.md): implemented behavior and interpretation boundaries.

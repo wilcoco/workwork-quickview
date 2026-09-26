@@ -9,7 +9,7 @@
 - Browser member-deactivation submission was not executed: automatic approval review blocked the access-changing test even for a synthetic local account. Nine automated membership tests cover deactivation, reactivation, revoked sessions, assignment continuity and races. No claim of browser verification for that mutation.
 - Desktop layout visually checked at 1280px. Actual mobile rendering remains unverified.
 - Backup tests verify independent SQLite snapshots including committed WAL data. No offsite schedule or production disaster-recovery restore has been configured or verified.
-- Public v0.2 deployment and persistence checks will be recorded below after release.
+- Public v0.2 deployment and persistence checks passed; details below.
 
 ## v0.1 baseline
 
@@ -31,3 +31,15 @@ Deployment `7cafb8a8-911c-4882-b679-1fbae60bbf1f` succeeded. Public smoke tests 
 Redeployment `0efc295f-f52e-48a1-a8c7-c3d626396060` succeeded. A second check confirmed the same companies, member account, sessions, question plan, two answer revisions and decision survived. Login after restart also succeeded. Two clearly named synthetic verification companies remain in the new database; their randomized test credentials are not committed or shared.
 
 The public landing page and account-free sample were checked in the browser. The original Workwork Cloud checkout remained clean at `ac19178f55351d720585a9f9f61c67b616ed849a`. No original service deployment was changed.
+
+## v0.2 public release and restart
+
+Application commit `9d333ff` was deployed successfully as Railway deployment `4e761851-5d28-4f3c-80ab-8ac9e451d5b1`. HTTPS health returns version `0.2.0`. Before deployment, an integrity-checked SQLite snapshot was created on the private service volume at `/data/backups/pre-v02-1790406295844.sqlite`. This remains on the same volume and is not an offsite backup.
+
+Fresh public smoke checks created only two clearly named synthetic verification companies and a synthetic member. They passed empty-company signup, secure cookie flags, invitation/join, draft privacy, authorized launch, old-evidence warnings, explicit reconfirmation preserving the original observation and author provenance, duplicate rejection, exact-source decision/action creation, member reported result, manager-only acceptance, persistent business-risk visibility, and a reviewed next-round draft with preserved lineage but zero fresh answers. Cross-company response/action writes returned 404.
+
+The same deployment was restarted through Railway. A separate persistence pass confirmed the synthetic accounts, existing sessions, two response revisions, exact decision source, accepted action with employee/owner history, draft lineage and company boundaries survived. Fresh sign-in also passed after restart. Public member deactivation was not performed.
+
+The updated landing page, illustrative briefing and owner exception desk were visually checked in the public browser. A further 390×844 viewport request still rendered at 1280×720, including a newly opened test tab; the override was reset. Phone rendering is not claimed as verified.
+
+No original Workwork repository, deployment or database was changed. Public mode remains guided, and live model calls were not made. The private test credential file is not part of the source or deployment.

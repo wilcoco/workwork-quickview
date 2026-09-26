@@ -46,3 +46,7 @@ Use a new destination filename each time. The command refuses overwrites and mis
 A snapshot on the same volume is not disaster recovery. It must be transferred to an appropriately secured independent backup location under an agreed retention policy. No offsite destination, automatic backup schedule, or production disaster-recovery restore is configured by this release. Snapshots contain confidential company data, account hashes and sessions: never place them in git or a public artifact.
 
 For restore, first preserve the current volume, stop writers, verify the chosen snapshot, and restore into a separate database path. Validate health, accounts and tenant records before switching DATABASE_PATH. Do not replace a live WAL database file or silently discard the current database.
+
+## v0.2 release record
+
+Application commit `9d333ff`; successful deployment `4e761851-5d28-4f3c-80ab-8ac9e451d5b1`. Public health and synthetic workflow tests passed, followed by an actual service restart and persistence checks. The additive schema-v3 migration retains prior users and records. An integrity-checked predeployment snapshot is retained at `/data/backups/pre-v02-1790406295844.sqlite` on the same private volume. This does not establish offsite disaster recovery.
