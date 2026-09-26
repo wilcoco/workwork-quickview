@@ -31,3 +31,18 @@ railway up --project 858d0a20-b606-4d24-b66d-3da56aca1514 --service 88505e05-413
 Run from a clean exported source directory. Never remove the volume during a redeploy. Preserve the project/service IDs above; the original Workwork Cloud project is a different target. Changing application source does not require importing or modifying any original Workwork data.
 
 Public signup is an independent account. Use the sample on the landing page to explore without creating records. Real companies start empty; deployment smoke tests use clearly named synthetic companies only.
+
+
+## Consistent SQLite snapshots
+
+The v0.2 image includes `scripts/backup.mjs`. An operator with access to this service's container can create a new local snapshot:
+
+```sh
+node scripts/backup.mjs --source /data/quickview.sqlite --destination /data/backups/quickview-UNIQUE-TIMESTAMP.sqlite
+```
+
+Use a new destination filename each time. The command refuses overwrites and missing sources, reads a consistent SQLite snapshot including committed WAL content, checks integrity, and restricts the output file to owner read/write. It prints record counts, not contents. Synthetic tests reopen the snapshot and confirm committed records survive independently.
+
+A snapshot on the same volume is not disaster recovery. It must be transferred to an appropriately secured independent backup location under an agreed retention policy. No offsite destination, automatic backup schedule, or production disaster-recovery restore is configured by this release. Snapshots contain confidential company data, account hashes and sessions: never place them in git or a public artifact.
+
+For restore, first preserve the current volume, stop writers, verify the chosen snapshot, and restore into a separate database path. Validate health, accounts and tenant records before switching DATABASE_PATH. Do not replace a live WAL database file or silently discard the current database.

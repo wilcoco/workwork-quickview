@@ -1,5 +1,18 @@
 # Verification · 2026-09-26
 
+## v0.2 local acceptance
+
+- 54 isolated tests pass, including prior behavior, freshness, exact-source decisions, action result/acceptance, tenant boundaries, repeated check-ins, lineage preservation, optimistic conflicts, offboarding, session revocation, additive legacy schema migration and snapshot recovery.
+- JavaScript syntax and whitespace checks pass.
+- Independent final review found and fixed two issues: overlapping recheck/missing counters and a recovered draft retaining request IDs deleted by another tab. Three regression tests execute the actual browser script for these cases.
+- Actual desktop browser: owner records a source-linked decision and action; member reports a result; owner accepts it; the original blocked response remains unchanged until explicitly rechecked; original observation date survives reconfirmation; request deep link survives reload; next check-in is a draft and launches with zero fresh answers.
+- Browser member-deactivation submission was not executed: automatic approval review blocked the access-changing test even for a synthetic local account. Nine automated membership tests cover deactivation, reactivation, revoked sessions, assignment continuity and races. No claim of browser verification for that mutation.
+- Desktop layout visually checked at 1280px. Actual mobile rendering remains unverified.
+- Backup tests verify independent SQLite snapshots including committed WAL data. No offsite schedule or production disaster-recovery restore has been configured or verified.
+- Public v0.2 deployment and persistence checks will be recorded below after release.
+
+## v0.1 baseline
+
 Local checks:
 
 - JavaScript syntax check across all server modules and browser code.

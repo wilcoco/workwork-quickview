@@ -10,7 +10,7 @@ import { buildBriefing, evidenceSuggestions } from './briefing.mjs';
 import { hashPassword, verifyPassword, newToken, tokenHash, publicUser, sessionCookie, readSessionToken, createRateLimiter, equalSecret, SESSION_LIFETIME, INVITE_LIFETIME } from './auth.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const RECORD_TYPES = ['questions', 'requests', 'responses', 'decisions'];
+const RECORD_TYPES = ['questions', 'requests', 'responses', 'decisions', 'actions', 'membershipEvents'];
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 const fail = (status, message) => { throw new HttpError(status, message); };
 
@@ -39,6 +39,11 @@ function date(value, field, { dateOnly = false, optional = false } = {}) {
 }
 function number(value, field) {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e15) fail(400, `${field} must be a finite number within ±1 quadrillion.`);
+  return value;
+}
+function freshnessPolicy(value, fallback = 7) {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || value < 1 || value > 90) fail(400, 'Evidence review interval must be a whole number from 1 to 90 days.');
   return value;
 }
 function email(value) {
@@ -113,9 +118,12 @@ export function createApp(options = {}) {
     const session = store.session(tokenHash(token), now());
     if (!session) return null;
     const user = store.user(session.userId);
-    return user ? { ...session, token, user } : null;
+    return user?.active ? { ...session, token, user } : null;
   }
   function startSession(request, response, user, status = 200) {
+    // Password verification is asynchronous; offboarding may happen while it runs.
+    const currentUser = store.user(user.id);
+    if (!currentUser?.active) fail(401, 'Email or password is incorrect.');
     const previousToken = readSessionToken(request);
     if (previousToken) store.deleteSession(tokenHash(previousToken));
     store.pruneSessions(now());
@@ -139,7 +147,7 @@ export function createApp(options = {}) {
       const url = new URL(request.url, 'http://localhost');
       const path = url.pathname;
       const method = request.method;
-      if (method === 'GET' && path === '/api/health') return json(response, 200, { status: 'ok', service: 'workwork-quickview', version: '0.1.0' });
+      if (method === 'GET' && path === '/api/health') return json(response, 200, { status: 'ok', service: 'workwork-quickview', version: '0.2.0' });
       if (!path.startsWith('/api/')) {
         if (method !== 'GET' && method !== 'HEAD') fail(405, 'Method not allowed.');
         const asset = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] }[path];
@@ -177,7 +185,7 @@ export function createApp(options = {}) {
           const user = store.userByEmail(address);
           dummyPasswordHash ??= hashPassword(newToken());
           const valid = await verifyPassword(typeof body.password === 'string' ? body.password : secret, user?.passwordHash || await dummyPasswordHash);
-          if (!user || !valid) fail(401, 'Email or password is incorrect.');
+          if (!user?.active || !valid) fail(401, 'Email or password is incorrect.');
           identityLimiter.clear(address);
           return startSession(request, response, user);
         }
@@ -203,23 +211,55 @@ export function createApp(options = {}) {
       if (method === 'POST' && path === '/api/logout') { store.deleteSession(tokenHash(session.token)); return json(response, 200, { ok: true }, { 'Set-Cookie': sessionCookie('', secureCookies, true) }); }
       if (method === 'GET' && path === '/api/state') {
         const raw = stateFor(user);
-        const questions = raw.questions.filter(q => user.role === 'manager' || q.status !== 'draft');
+        const questions = raw.questions.filter(q => user.role === 'manager' || q.status !== 'draft')
+          .map(q => ({...q, freshnessDays:q.freshnessDays ?? 7, round:q.round ?? 1}));
         const requests = raw.requests.filter(r => questions.some(q => q.id === r.questionId));
         const responses = raw.responses.filter(r => requests.some(q => q.id === r.requestId));
         const decisions = raw.decisions.filter(d => questions.some(q => q.id === d.questionId));
+        const actions = raw.actions.filter(a => questions.some(q => q.id === a.questionId));
+        const members=store.members(user.companyId);
+        const inactiveIds=new Set(members.filter(m=>!m.active).map(m=>m.id));
+        const briefings=questions.map(q => buildBriefing(q, requests, responses, decisions, {now:now(), actions}));
+        const assignmentGaps={
+          requests:requests.filter(r=>inactiveIds.has(r.assigneeId) && questions.some(q=>q.id===r.questionId && q.status==='live')
+            && !briefings.find(b=>b.questionId===r.questionId)?.rows.find(row=>row.requestId===r.id)?.current).map(r=>r.id),
+          actions:actions.filter(a=>inactiveIds.has(a.assigneeId) && a.status!=='accepted').map(a=>a.id)
+        };
         return json(response, 200, { user: publicUser(user), company:store.company(user.companyId), csrfToken:session.csrfToken,
-          members:store.members(user.companyId), questions, requests, responses, decisions, planning:planningInfo(),
-          briefings:questions.map(q => buildBriefing(q, requests, responses, decisions)),
+          members, questions, requests, responses, decisions, actions, assignmentGaps,
+          membershipEvents:user.role==='manager'?raw.membershipEvents:[], planning:planningInfo(), briefings,
           suggestions:Object.fromEntries(requests.map(r => [r.id, evidenceSuggestions(r, responses, requests)])) });
       }
       if (!['POST','PATCH'].includes(method)) fail(404, 'API endpoint not found.');
       const body = await bodyOf(request);
+      // A request may have begun before the owner revoked this session.
+      if (!currentSession(request)) fail(401, 'Please sign in to continue.');
       const stamp = new Date(now()).toISOString();
       const base = () => ({id:randomUUID(), createdAt:stamp, authorId:user.id, authorName:user.name});
       const manager = () => { if(user.role !== 'manager') fail(403,'Only company managers can perform this action.'); };
       const limited = () => { if(!companyLimiter.allow(user.companyId, now())) fail(429,'Your company has reached the hourly request limit. Try again later.'); };
-      const memberId = value => { const id = identifier(value, 'Assignee', true); if(id && !store.members(user.companyId).some(m=>m.id===id)) fail(404,'Team member not found.'); return id; };
+      const memberId = value => { const id = identifier(value, 'Assignee', true); if(id && !store.members(user.companyId).some(m=>m.id===id && m.active)) fail(404,'Active team member not found.'); return id; };
       const version = (expected, record) => { if(!Number.isSafeInteger(expected) || expected !== record.version) fail(409,'This item changed. Refresh to see the latest version before trying again.'); };
+      const membershipMatch=path.match(/^\/api\/members\/([^/]+)$/);
+      if(method==='PATCH' && membershipMatch) {
+        manager(); fields(body,['active','expectedActive']); limited();
+        if(typeof body.active!=='boolean' || typeof body.expectedActive!=='boolean')fail(400,'Active and expectedActive must be true or false.');
+        const id=identifier(membershipMatch[1],'Member ID');
+        const target=store.members(user.companyId).find(m=>m.id===id);
+        if(!target)fail(404,'Team member not found.');
+        if(target.active!==body.expectedActive)fail(409,'This membership changed. Refresh before changing access.');
+        if(!body.active && id===user.id)fail(409,'You cannot deactivate your own account.');
+        if(!body.active && target.role==='manager' && store.members(user.companyId).filter(m=>m.active && m.role==='manager').length<=1)
+          fail(409,'Keep at least one active company manager.');
+        if(body.active===target.active)return json(response,200,{member:target});
+        const event={...base(),memberId:target.id,memberName:target.name,previousActive:target.active,active:body.active};
+        store.transaction(()=>{
+          store.setMemberActive(user.companyId,target.id,body.active);
+          if(!body.active)store.deleteUserSessions(target.id);
+          store.insert(user.companyId,'membershipEvents',event);
+        });
+        return json(response,200,{member:{...target,active:body.active},event});
+      }
       if(method === 'POST' && path === '/api/invites') {
         manager(); fields(body,['email']); limited();
         const address = email(body.email);
@@ -229,25 +269,39 @@ export function createApp(options = {}) {
         return json(response,201,{invite:{email:address,token,expiresAt:new Date(expiresAt).toISOString()}});
       }
       if(method === 'POST' && path === '/api/questions') {
-        manager(); fields(body,['text','context','dueDate']); limited();
-        const question = {...base(), text:text(body.text,'Question',{max:1200}),context:text(body.context,'Context',{required:false,max:3000}),dueDate:date(body.dueDate,'Response due date',{dateOnly:true,optional:true}),status:'draft',version:1};
+        manager(); fields(body,['text','context','dueDate','freshnessDays']); limited();
+        const question = {...base(), text:text(body.text,'Question',{max:1200}),context:text(body.context,'Context',{required:false,max:3000}),dueDate:date(body.dueDate,'Response due date',{dateOnly:true,optional:true}),freshnessDays:freshnessPolicy(body.freshnessDays),round:1,status:'draft',version:1};
         if(planningActive.has(user.companyId)) fail(429,'A question is already being drafted for your company. Try again shortly.');
         planningActive.add(user.companyId);
         let draft; try { draft = await plan(question.text,question.context); } finally { planningActive.delete(user.companyId); }
+        if (!currentSession(request)) fail(401, 'Please sign in to continue.');
         question.engine=draft.engine; question.planNote=draft.note;
         const requests=draft.requests.map(r=>({...base(),...r,questionId:question.id,assigneeId:null,version:1,followups:[]}));
         store.transaction(()=>{store.insert(user.companyId,'questions',question); for(const r of requests) store.insert(user.companyId,'requests',r);});
         return json(response,201,{question,requests});
       }
-      const qmatch = path.match(/^\/api\/questions\/([^/]+)(?:\/(launch|close|reopen|decisions))?$/);
+      const qmatch = path.match(/^\/api\/questions\/([^/]+)(?:\/(launch|close|reopen|decisions|check-ins))?$/);
       if(qmatch) {
         manager(); const q=requireRecord(user,'questions',identifier(qmatch[1],'Question ID')); const action=qmatch[2];
         if(method==='PATCH' && !action) {
-          fields(body,['expectedVersion','context','dueDate','requests']); version(body.expectedVersion,q);
+          fields(body,['expectedVersion','context','dueDate','requests','freshnessDays']); version(body.expectedVersion,q);
           if(q.status!=='draft') fail(409,'Only drafts can be edited. Use a follow-up for a live question.');
           if(!Array.isArray(body.requests) || body.requests.length<1 || body.requests.length>8) fail(400,'Provide 1 to 8 response requests.');
-          const requests=body.requests.map(r=>{fields(r,['title','role','prompt','assigneeId']); return {...base(),title:text(r.title,'Title',{max:120}),role:text(r.role,'Suggested role',{required:false,max:100}),prompt:text(r.prompt,'Question prompt',{max:1500}),assigneeId:memberId(r.assigneeId),questionId:q.id,version:1,followups:[]};});
-          const updated={...q,context:text(body.context,'Context',{required:false,max:3000}),dueDate:date(body.dueDate,'Response due date',{dateOnly:true,optional:true}),version:q.version+1,updatedAt:stamp};
+          const retainedIds = new Set();
+          const requests=body.requests.map(r=>{
+            fields(r,['id','title','role','prompt','assigneeId']);
+            const id=identifier(r.id,'Draft request ID',true);
+            let original=null;
+            if(id) {
+              original=requireRecord(user,'requests',id);
+              if(original.questionId!==q.id)fail(404,'Draft request not found in this question.');
+              if(retainedIds.has(id))fail(400,'A draft request may appear only once.');
+              retainedIds.add(id);
+            }
+            return {...(original || base()),title:text(r.title,'Title',{max:120}),role:text(r.role,'Suggested role',{required:false,max:100}),
+              prompt:text(r.prompt,'Question prompt',{max:1500}),assigneeId:memberId(r.assigneeId),questionId:q.id,version:1,followups:[]};
+          });
+          const updated={...q,context:text(body.context,'Context',{required:false,max:3000}),dueDate:date(body.dueDate,'Response due date',{dateOnly:true,optional:true}),freshnessDays:freshnessPolicy(body.freshnessDays,q.freshnessDays ?? 7),version:q.version+1,updatedAt:stamp};
           store.transaction(()=>{store.db.prepare('DELETE FROM records WHERE company_id = ? AND type = ? AND json_extract(payload, ?) = ?').run(user.companyId,'requests','$.questionId',q.id); for(const r of requests) store.insert(user.companyId,'requests',r); store.replace(user.companyId,'questions',updated);});
           return json(response,200,{question:updated,requests});
         }
@@ -256,18 +310,72 @@ export function createApp(options = {}) {
           if(action==='launch') {
             if(q.status!=='draft') fail(409,'This question has already been launched.');
             const requests=store.all(user.companyId,'requests').filter(r=>r.questionId===q.id);
-            if(!requests.length || requests.some(r=>!r.assigneeId)) fail(400,'Assign a responsible person to every request before launching. You may assign yourself.');
+            const activeIds=new Set(store.members(user.companyId).filter(m=>m.active).map(m=>m.id));
+            if(!requests.length || requests.some(r=>!activeIds.has(r.assigneeId))) fail(400,'Assign an active responsible person to every request before launching. You may assign yourself.');
           } else if(action==='close' && q.status!=='live' || action==='reopen' && q.status!=='closed') fail(409,'This question cannot make that transition.');
           const updated={...q,status:action==='close'?'closed':'live',version:q.version+1,updatedAt:stamp,...(action==='launch'?{launchedAt:stamp}:{}),...(action==='close'?{closedAt:stamp}:{closedAt:null})};
           store.replace(user.companyId,'questions',updated); return json(response,200,{question:updated});
         }
         if(method==='POST' && action==='decisions') {
-          fields(body,['text']); if(q.status==='draft') fail(409,'Launch the question first.'); limited();
-          const decision={...base(),questionId:q.id,text:text(body.text,'Decision',{max:3000})};
-          store.insert(user.companyId,'decisions',decision); return json(response,201,{decision});
+          fields(body,['text','responseIds','action']); if(q.status==='draft') fail(409,'Launch the question first.'); limited();
+          const ids = body.responseIds ?? [];
+          if(!Array.isArray(ids) || ids.length > 32 || new Set(ids).size !== ids.length) fail(400,'Provide up to 32 distinct supporting response IDs.');
+          const responseIds = ids.map(id => {
+            const answer = requireRecord(user,'responses',identifier(id,'Response ID'));
+            if(answer.questionId !== q.id) fail(404,'Supporting response not found in this question.');
+            return answer.id;
+          });
+          const decision={...base(),questionId:q.id,text:text(body.text,'Decision',{max:3000}),responseIds};
+          let assignedAction = null;
+          if(body.action !== undefined && body.action !== null) {
+            fields(body.action,['title','expectedResult','assigneeId','dueDate']);
+            const assigneeId = memberId(body.action.assigneeId);
+            if(!assigneeId) fail(400,'Choose a responsible person for the action.');
+            assignedAction={...base(),questionId:q.id,decisionId:decision.id,title:text(body.action.title,'Action title',{max:200}),
+              expectedResult:text(body.action.expectedResult,'Expected result',{max:2000}),assigneeId,
+              dueDate:date(body.action.dueDate,'Action due date',{dateOnly:true,optional:true}),status:'open',version:1,updates:[]};
+          }
+          store.transaction(()=>{store.insert(user.companyId,'decisions',decision);if(assignedAction)store.insert(user.companyId,'actions',assignedAction);});
+          return json(response,201,{decision,...(assignedAction?{action:assignedAction}:{})});
+        }
+        if(method==='POST' && action==='check-ins') {
+          fields(body,['expectedVersion','text','context','dueDate']); version(body.expectedVersion,q);
+          if(q.status==='draft') fail(409,'Launch this question before starting a check-in.'); limited();
+          const question={...base(),text:text(body.text,'Question',{max:1200}),context:text(body.context,'This check-in scope and period',{max:3000}),
+            dueDate:date(body.dueDate,'Response due date',{dateOnly:true,optional:true}),freshnessDays:q.freshnessDays ?? 7,
+            previousQuestionId:q.id,round:(q.round ?? 1)+1,status:'draft',version:1,engine:'check-in',
+            planNote:'Copied from the earlier question. Review each prompt, scope and assignee for this period before launching. Earlier responses are context, not new evidence.'};
+          const responses=store.all(user.companyId,'responses');
+          const activeIds=new Set(store.members(user.companyId).filter(m=>m.active).map(m=>m.id));
+          const requests=store.all(user.companyId,'requests').filter(r=>r.questionId===q.id).map(r=>({
+            ...base(),title:r.title,role:r.role,prompt:r.prompt,assigneeId:activeIds.has(r.assigneeId)?r.assigneeId:null,questionId:question.id,version:1,followups:[],
+            previousRequestId:r.id,previousResponseId:responses.filter(a=>a.requestId===r.id).at(-1)?.id || null
+          }));
+          store.transaction(()=>{
+            store.insert(user.companyId,'questions',question);
+            for(const r of requests)store.insert(user.companyId,'requests',r);
+            store.replace(user.companyId,'questions',{...q,version:q.version+1,updatedAt:stamp});
+          });
+          return json(response,201,{question,requests});
         }
       }
-      const rmatch=path.match(/^\/api\/requests\/([^/]+)(?:\/(responses))?$/);
+      const amatch=path.match(/^\/api\/actions\/([^/]+)$/);
+      if(method==='PATCH' && amatch) {
+        const action=requireRecord(user,'actions',identifier(amatch[1],'Action ID'));
+        requireRecord(user,'questions',action.questionId);
+        if(user.role!=='manager' && action.assigneeId!==user.id) fail(403,'Only the assigned person or a manager can update this action.');
+        fields(body,['expectedVersion','status','note','source','assigneeId']);version(body.expectedVersion,action);limited();
+        let assigneeId=action.assigneeId;
+        if(body.assigneeId!==undefined) {manager();assigneeId=memberId(body.assigneeId);if(!assigneeId)fail(400,'Choose an active responsible person.');}
+        if(!['open','in_progress','blocked','reported_done','accepted'].includes(body.status)) fail(400,'Choose a valid action status.');
+        if(body.status==='accepted') {manager();if(action.status!=='reported_done')fail(409,'Accept an action only after a result has been reported.');}
+        if(action.status==='accepted') {manager();if(body.status!=='open')fail(409,'An accepted action must first be reopened.');}
+        const update={...base(),status:body.status,note:text(body.note,'Action update',{max:3000}),source:text(body.source,'Result source',{required:false,max:1000}),
+          assigneeId,previousAssigneeId:action.assigneeId};
+        const updated={...action,assigneeId,status:body.status,version:action.version+1,updatedAt:stamp,updates:[...(action.updates || []),update]};
+        store.replace(user.companyId,'actions',updated);return json(response,200,{action:updated});
+      }
+      const rmatch=path.match(/^\/api\/requests\/([^/]+)(?:\/(responses|reconfirm))?$/);
       if(rmatch) {
         const r=requireRecord(user,'requests',identifier(rmatch[1],'Request ID'));
         const q=requireRecord(user,'questions',r.questionId);
@@ -294,12 +402,30 @@ export function createApp(options = {}) {
             const sourceRequest=requireRecord(user,'requests',source.requestId);
             const sourceQuestion=requireRecord(user,'questions',sourceRequest.questionId);
             if(sourceQuestion.status==='draft') fail(404,'Source response not available.');
-            reused={responseId:source.id,questionId:sourceRequest.questionId,authorName:source.authorName,createdAt:source.createdAt,text:source.text};
+            reused={responseId:source.id,questionId:sourceRequest.questionId,requestId:source.requestId,requestVersion:source.requestVersion,
+              authorId:source.authorId,authorName:source.authorName,createdAt:source.createdAt,text:source.text,status:source.status,
+              observedAt:source.observedAt || null,confirmedAt:source.confirmedAt || null,source:source.source || '',
+              originalResponseId:source.originalResponseId || source.id};
           }
+          const observedAt=date(body.observedAt,'Observation time',{optional:true});
+          if(observedAt && Date.parse(observedAt)>now()+5*60*1000)fail(400,'Observation time cannot be in the future. Record forecasts in the response text, separate from observed facts.');
           const answer={...base(),questionId:q.id,requestId:r.id,requestVersion:r.version,previousResponseId:previous?.id || null,
             text:text(body.text,'Response',{max:6000}),status:body.status,source:text(body.source,'Source reference',{required:false,max:1000}),
-            observedAt:date(body.observedAt,'Observation time',{optional:true}),nextStep:text(body.nextStep,'Next step',{required:false,max:2000}),decisionNeeded:text(body.decisionNeeded,'Decision needed',{required:false,max:2000}),reused};
+            observedAt,nextStep:text(body.nextStep,'Next step',{required:false,max:2000}),decisionNeeded:text(body.decisionNeeded,'Decision needed',{required:false,max:2000}),reused};
           store.insert(user.companyId,'responses',answer); return json(response,201,{response:answer});
+        }
+        if(method==='POST' && rmatch[2]==='reconfirm') {
+          fields(body,['expectedVersion','expectedResponseId']);
+          if(user.role!=='manager' && r.assigneeId!==user.id)fail(403,'Only the assigned person or a manager can reconfirm.');
+          version(body.expectedVersion,r);limited();
+          const previous=store.all(user.companyId,'responses').filter(a=>a.requestId===r.id).at(-1);
+          if(!previous || previous.requestVersion!==r.version)fail(409,'Provide a full answer to the current request before reconfirming.');
+          if(body.expectedResponseId!==previous.id)fail(409,'Another response was submitted. Refresh before reconfirming.');
+          const answer={...previous,...base(),questionId:q.id,requestId:r.id,requestVersion:r.version,previousResponseId:previous.id,
+            kind:'reconfirmation',confirmedAt:stamp,reconfirmedResponseId:previous.id,originalResponseId:previous.originalResponseId || previous.id,
+            originalSource:previous.originalSource || {responseId:previous.id,authorId:previous.authorId,authorName:previous.authorName,
+              createdAt:previous.createdAt,observedAt:previous.observedAt || null,source:previous.source || ''}};
+          store.insert(user.companyId,'responses',answer);return json(response,201,{response:answer});
         }
       }
       fail(404,'API endpoint not found.');

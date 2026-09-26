@@ -1,10 +1,11 @@
 const request = (title, role, prompt) => ({ title, role, prompt });
 export function guidedPlan(question, context = '') {
   const ko = /[가-힣]/.test(question);
-  const delivery = /deliver|shipment|dispatch|ship\b|납기|출하|배송|납품/.test(question.toLowerCase());
-  const quality = /quality|defect|reject|품질|불량/.test(question.toLowerCase());
-  const cost = /cost|margin|profit|expense|원가|비용|수익|이익/.test(question.toLowerCase());
-  const launch = /line|launch|equipment|readiness|라인|설비|준비|신제품/.test(question.toLowerCase());
+  const scope = `${question} ${context}`.toLowerCase();
+  const delivery = /\b(?:deliver\w*|shipments?|dispatch\w*|ship|shipping)\b|납기|출하|배송|납품/.test(scope);
+  const quality = /\b(?:quality|defects?|reject\w*)\b|품질|불량/.test(scope);
+  const cost = /\b(?:costs?|margins?|profits?|expenses?)\b|원가|비용|수익|이익/.test(scope);
+  const launch = /\b(?:lines?|launch\w*|equipment|readiness)\b|라인|설비|준비|신제품/.test(scope);
   let requests;
   if (delivery) requests = ko ? [
     request('납기 대상과 약속', '영업 / 운영', '대상 주문, 수량, 약속한 납기일과 집계 기준을 알려 주세요. 근거와 아직 확인하지 못한 항목을 포함해 주세요.'),

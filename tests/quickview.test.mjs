@@ -8,7 +8,7 @@ import { guidedPlan, planQuestion, validatePlan } from '../server/planner.mjs';
 import { buildBriefing, evidenceSuggestions } from '../server/briefing.mjs';
 const PASSWORD='Synthetic testing password 2026!';
 async function setup(t,options={}){
-  const app=createApp({databasePath:':memory:',production:false,authRateLimit:1000,identityRateLimit:1000,...options});const address=await app.listen(0,'127.0.0.1');const origin=`http://127.0.0.1:${address.port}`;
+  const app=createApp({databasePath:':memory:',production:false,now:()=>Date.parse('2026-09-26T12:00:00Z'),authRateLimit:1000,identityRateLimit:1000,...options});const address=await app.listen(0,'127.0.0.1');const origin=`http://127.0.0.1:${address.port}`;
   t.after(()=>app.close());
   function client(){let cookie='',csrf='';return {async call(path,body,method=body===undefined?'GET':'POST',headers={}){const res=await fetch(origin+'/api'+path,{method,headers:{'Content-Type':'application/json',Origin:origin,Cookie:cookie,'X-CSRF-Token':csrf,...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});if(res.headers.get('set-cookie'))cookie=res.headers.get('set-cookie').split(';')[0];const data=await res.json();if(data.csrfToken)csrf=data.csrfToken;return {status:res.status,data,headers:res.headers};},async signup(tag){return this.call('/signup',{companyName:'Test '+tag,name:'Owner '+tag,email:tag+'@example.test',password:PASSWORD});}};}
   return {app,client,origin};
