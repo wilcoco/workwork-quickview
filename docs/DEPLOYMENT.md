@@ -50,3 +50,9 @@ For restore, first preserve the current volume, stop writers, verify the chosen 
 ## v0.2 release record
 
 Application commit `9d333ff`; successful deployment `4e761851-5d28-4f3c-80ab-8ac9e451d5b1`. Public health and synthetic workflow tests passed, followed by an actual service restart and persistence checks. The additive schema-v3 migration retains prior users and records. An integrity-checked predeployment snapshot is retained at `/data/backups/pre-v02-1790406295844.sqlite` on the same private volume. This does not establish offsite disaster recovery.
+
+## v0.3 release record
+
+Application commit `2af02cc`; successful final deployment `f11c2a7c-e0e4-4f67-b549-1bbfbb26cd17`. HTTPS health reports `0.3.0`. Deploy only clean tracked exports with Railway CLI 4.29.0 or later supporting explicit `--project`; the local 4.6.3 binary does not support that `up` option.
+
+An integrity-checked predeployment snapshot remains at `/data/backups/pre-v03-20260927-conversations.sqlite` on the same volume. No volume or database replacement was performed. Public synthetic conversation/reaction checks ran after the initial v0.3 build `43b485f` (deployment `8c4bd632-ebd3-4036-9f6b-76a8cf089d9c`). After final redeployment, a fresh sign-in confirmed those exact records and feedback counts survived. The final public JavaScript matches the tested release export byte-for-byte. The runtime remains in guided mode; no new model configuration or external messaging is introduced.

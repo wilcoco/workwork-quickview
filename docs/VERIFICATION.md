@@ -10,6 +10,16 @@
 - Desktop layout visually checked. At a verified 390 × 844 browser viewport, mobile contribution text and controls were inspected and enlarged; the document width was 390px and the dialog width/scroll width both 350px, with no horizontal overflow. This is a browser viewport test, not testing on physical pilot devices. The temporary viewport was reset.
 - Tests and demonstration data are synthetic. No live model inference is added; explicit user actions determine the relationship types. No original Workwork service or database is changed.
 
+## v0.3 public release
+
+Final application commit `2af02cc` deployed successfully as `f11c2a7c-e0e4-4f67-b549-1bbfbb26cd17`. HTTPS health reports `0.3.0`; public JavaScript was compared byte-for-byte with the tested clean release export (SHA-256 `7e2e45209c7b7080a3de8783547979f23e072cc2621b56cabb535d8c30f23ba0`).
+
+One clearly named synthetic acceptance company and member exercised public signup/invitation, assigned response, concern, follow-up, member reply, another unanswered follow-up, and Helpful feedback from two people. Duplicate Helpful submission did not double count. The original blocked status and one-of-one response coverage stayed unchanged. A fresh sign-in after the final redeployment recovered the exact response, all four conversation entries, one open follow-up, one concern and two Helpful reactions.
+
+The final public landing page and account-free sample conversation were checked in the browser. The sample shows the original production statement, quality concern, owner follow-up, quality reply and further unanswered question. The Copy briefing button reported successful local copying; copied content is covered by the frontend test and the exact public artifact check. No messages were sent externally.
+
+The predeployment snapshot is retained on the same private Railway volume. This release does not change the previously documented offsite recovery limits.
+
 ## v0.2 local acceptance
 
 - 54 isolated tests pass, including prior behavior, freshness, exact-source decisions, action result/acceptance, tenant boundaries, repeated check-ins, lineage preservation, optimistic conflicts, offboarding, session revocation, additive legacy schema migration and snapshot recovery.
