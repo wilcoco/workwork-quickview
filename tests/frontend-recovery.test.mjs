@@ -33,7 +33,7 @@ function frontend({ forms = [], planContainer = { innerHTML: '' } } = {}) {
     setInterval: () => 0,
   });
   vm.runInContext(`${frontendSource}\n;globalThis.acceptance = {
-    restoreForm, snapshotForm, questionPage, requestsPage, responseConversation, threadEntries, workspaceKey, retainConversationDraft, resetConversationUI,
+    restoreForm, snapshotForm, questionPage, requestsPage, briefingText, responseConversation, threadEntries, workspaceKey, retainConversationDraft, resetConversationUI,
     draft(targetId, kind) { return conversationDrafts.get(conversationDraftKey(targetId, kind)); },
     load(nextState, questionId) { state = nextState; selected = questionId; }
   };`, context, { filename: 'public/app.js', timeout: 1000 });
@@ -211,4 +211,40 @@ test('closed-root follow-up remains replyable in My requests and inactive assign
   fixture.user = { id: 'different-member', role: 'member' };
   app.load(fixture, null);
   assert.doesNotMatch(app.requestsPage(), /Confirm the remaining approval/);
+});
+
+
+test('copied briefing includes exact follow-up context and concerns without changing original coverage or status', () => {
+  const app = frontend(), fixture = conversationFixture();
+  const question = fixture.questions[0];
+  Object.assign(question, { authorName: 'Synthetic manager', createdAt: '2026-09-27T07:00:00Z', freshnessDays: 7 });
+  Object.assign(fixture.requests[0], { title: 'Quality confirmation', prompt: 'Confirm current release status.', version: 1 });
+  fixture.responses.forEach((response, index) => Object.assign(response, {
+    requestVersion: 1, status: 'on_track', observedAt: '2026-09-27T08:00:00Z',
+    createdAt: index ? '2026-09-27T09:30:00Z' : '2026-09-27T08:00:00Z',
+    source: index ? 'Current synthetic release register' : 'Exact earlier release register',
+  }));
+  const concern = { id: 'concern', parentId: 'original-answer', questionId: question.id, requestId: 'original-request', kind: 'concern', text: 'The signed release sheet is still missing.', source: 'Synthetic release checklist', authorName: 'Synthetic quality reviewer', authorId: 'quality', createdAt: '2026-09-27T09:05:00Z' };
+  fixture.conversationEntries.push(concern);
+  fixture.conversations[question.id].concerns.push(concern);
+  fixture.briefings = [buildBriefing(question, fixture.requests, fixture.responses, [], { now: Date.parse('2026-09-27T10:00:00Z') })];
+  const original = structuredClone(fixture);
+  app.load(fixture, question.id);
+  const copied = app.briefingText(question);
+  assert.match(copied, /UNANSWERED FOLLOW-UPS/);
+  assert.match(copied, /Question: Confirm the remaining approval/);
+  assert.match(copied, /Assigned to: Synthetic member/);
+  assert.match(copied, /Asked by Synthetic manager; posted/);
+  assert.match(copied, /Exact parent reference: original-answer/);
+  assert.match(copied, /Exact parent text: Original evidence/);
+  assert.match(copied, /Parent source reference: Exact earlier release register/);
+  assert.match(copied, /RECORDED CONCERNS/);
+  assert.match(copied, /The signed release sheet is still missing/);
+  assert.match(copied, /By Synthetic quality reviewer; posted/);
+  assert.match(copied, /Source reference: Synthetic release checklist/);
+  assert.match(copied, /Quality confirmation — Reported on track/);
+  assert.match(copied, /Responses received: 1\/1\. Reporting coverage is not business performance\./);
+  assert.match(copied, /separate from original response coverage and reported status/);
+  assert.doesNotMatch(copied, /Quality confirmation — Reported blocked/);
+  assert.deepEqual(fixture, original, 'Exporting conversations must not rewrite the source records or briefing state');
 });

@@ -1,4 +1,14 @@
-# Verification · 2026-09-26
+# Verification · 2026-09-27
+
+## v0.3 local acceptance
+
+- All 73 tests pass: retained v0.2 behavior plus exact-parent conversations, source-bounded graph projection, manager-assigned follow-ups, authorized replies after question closure, company/draft boundaries, actor-specific Helpful idempotence, persistent concerns, inactive assignees, unchanged original response status/coverage, and conversation context in copied briefings.
+- Syntax and whitespace checks pass. No destructive database migration is introduced; v0.3 adds two record types to the existing tenant-scoped record store.
+- Eight tests execute the actual browser script and cover draft recovery, company/account-bound conversation drafts, historical response identity, closed-question follow-ups, and copied briefing context. Independent review reproduced and then verified the fix for a decision draft lost while navigating into a conversation: the original source-linked draft is now suspended and can be restored explicitly.
+- A synthetic local company exercised the live HTTP sequence: owner question, assigned response, written concern, assigned follow-up, member reply, another pending follow-up and idempotent Helpful feedback from two people. The original blocked business status and response coverage stayed unchanged.
+- Actual browser checks: synthetic owner sign-in, briefing conversation counters, original-source conversation, named concern/question/reply cards, source references, optional relationship trail, Add detail submission, manager follow-up assignment and a reply submitted through its exact question. A partially written detail survived returning to the conversation and reopening its form before submission.
+- Desktop layout visually checked. At a verified 390 × 844 browser viewport, mobile contribution text and controls were inspected and enlarged; the document width was 390px and the dialog width/scroll width both 350px, with no horizontal overflow. This is a browser viewport test, not testing on physical pilot devices. The temporary viewport was reset.
+- Tests and demonstration data are synthetic. No live model inference is added; explicit user actions determine the relationship types. No original Workwork service or database is changed.
 
 ## v0.2 local acceptance
 
