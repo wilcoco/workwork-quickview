@@ -7,10 +7,11 @@ import { resolve, dirname } from 'node:path';
 import { openStore } from './store.mjs';
 import { planQuestion, planningInfo } from './planner.mjs';
 import { buildBriefing, evidenceSuggestions } from './briefing.mjs';
+import { buildConversation } from './conversation.mjs';
 import { hashPassword, verifyPassword, newToken, tokenHash, publicUser, sessionCookie, readSessionToken, createRateLimiter, equalSecret, SESSION_LIFETIME, INVITE_LIFETIME } from './auth.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const RECORD_TYPES = ['questions', 'requests', 'responses', 'decisions', 'actions', 'membershipEvents'];
+const RECORD_TYPES = ['questions', 'requests', 'responses', 'decisions', 'actions', 'membershipEvents', 'conversationEntries', 'reactionEvents'];
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 const fail = (status, message) => { throw new HttpError(status, message); };
 
@@ -147,7 +148,7 @@ export function createApp(options = {}) {
       const url = new URL(request.url, 'http://localhost');
       const path = url.pathname;
       const method = request.method;
-      if (method === 'GET' && path === '/api/health') return json(response, 200, { status: 'ok', service: 'workwork-quickview', version: '0.2.0' });
+      if (method === 'GET' && path === '/api/health') return json(response, 200, { status: 'ok', service: 'workwork-quickview', version: '0.3.0' });
       if (!path.startsWith('/api/')) {
         if (method !== 'GET' && method !== 'HEAD') fail(405, 'Method not allowed.');
         const asset = { '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/styles.css': ['styles.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] }[path];
@@ -217,6 +218,10 @@ export function createApp(options = {}) {
         const responses = raw.responses.filter(r => requests.some(q => q.id === r.requestId));
         const decisions = raw.decisions.filter(d => questions.some(q => q.id === d.questionId));
         const actions = raw.actions.filter(a => questions.some(q => q.id === a.questionId));
+        const conversationEntries = raw.conversationEntries.filter(entry => questions.some(q => q.id === entry.questionId));
+        const reactionEvents = raw.reactionEvents.filter(event => questions.some(q => q.id === event.questionId));
+        const conversations = Object.fromEntries(questions.map(q => [q.id,
+          buildConversation(q, requests, responses, conversationEntries, reactionEvents, decisions, actions)]));
         const members=store.members(user.companyId);
         const inactiveIds=new Set(members.filter(m=>!m.active).map(m=>m.id));
         const briefings=questions.map(q => buildBriefing(q, requests, responses, decisions, {now:now(), actions}));
@@ -227,6 +232,7 @@ export function createApp(options = {}) {
         };
         return json(response, 200, { user: publicUser(user), company:store.company(user.companyId), csrfToken:session.csrfToken,
           members, questions, requests, responses, decisions, actions, assignmentGaps,
+          conversationEntries, reactionEvents, conversations,
           membershipEvents:user.role==='manager'?raw.membershipEvents:[], planning:planningInfo(), briefings,
           suggestions:Object.fromEntries(requests.map(r => [r.id, evidenceSuggestions(r, responses, requests)])) });
       }
@@ -279,6 +285,50 @@ export function createApp(options = {}) {
         const requests=draft.requests.map(r=>({...base(),...r,questionId:question.id,assigneeId:null,version:1,followups:[]}));
         store.transaction(()=>{store.insert(user.companyId,'questions',question); for(const r of requests) store.insert(user.companyId,'requests',r);});
         return json(response,201,{question,requests});
+      }
+      const conversationMatch = path.match(/^\/api\/questions\/([^/]+)\/(conversation|reactions)$/);
+      if (method === 'POST' && conversationMatch) {
+        const q = requireRecord(user, 'questions', identifier(conversationMatch[1], 'Question ID'));
+        if (q.status === 'draft') fail(user.role === 'manager' ? 409 : 404,
+          user.role === 'manager' ? 'Launch the question before adding a conversation.' : 'Question not found.');
+        const isReaction = conversationMatch[2] === 'reactions';
+        fields(body, isReaction ? ['targetId', 'active'] : ['parentId', 'kind', 'text', 'source', 'assigneeId']);
+        limited();
+        const targetId = identifier(isReaction ? body.targetId : body.parentId, isReaction ? 'Target ID' : 'Parent ID');
+        const responseParent = store.get(user.companyId, 'responses', targetId);
+        const entryParent = responseParent ? null : store.get(user.companyId, 'conversationEntries', targetId);
+        const parent = responseParent || entryParent;
+        if (!parent || parent.questionId !== q.id) fail(404, 'Conversation source not found in this question.');
+        const parentRequest = store.get(user.companyId, 'requests', parent.requestId);
+        if (!parentRequest || parentRequest.questionId !== q.id) fail(404, 'Conversation source not found in this question.');
+        if (isReaction) {
+          if (typeof body.active !== 'boolean') fail(400, 'Helpful must be true or false.');
+          const previous = store.all(user.companyId, 'reactionEvents')
+            .filter(event => event.questionId === q.id && event.targetId === parent.id && event.authorId === user.id && event.kind === 'helpful').at(-1);
+          if ((previous?.active ?? false) === body.active) return json(response, 200, {reaction: previous || null});
+          const reaction = {...base(), questionId: q.id, targetId: parent.id, kind: 'helpful', active: body.active};
+          store.insert(user.companyId, 'reactionEvents', reaction);
+          return json(response, 200, {reaction});
+        }
+        if (!['question', 'answer', 'context', 'concern'].includes(body.kind)) fail(400, 'Choose a conversation kind.');
+        let assigneeId = null;
+        if (body.kind === 'question') {
+          manager();
+          if (q.status !== 'live') fail(409, 'Reopen the owner question before assigning a new follow-up.');
+          assigneeId = memberId(body.assigneeId);
+          if (!assigneeId) fail(400, 'Choose an active person to answer the follow-up.');
+        } else {
+          if (body.assigneeId !== undefined && body.assigneeId !== null && body.assigneeId !== '')
+            fail(400, 'Only follow-up questions assign a responsible person.');
+          if (body.kind === 'answer') {
+            if (!entryParent || parent.kind !== 'question') fail(400, 'Reply to an assigned follow-up question.');
+            if (user.role !== 'manager' && parent.assigneeId !== user.id) fail(403, 'Only the assigned person or a manager can answer this follow-up.');
+          }
+        }
+        const entry = {...base(), questionId: q.id, requestId: parent.requestId, parentId: parent.id, kind: body.kind,
+          text: text(body.text, 'Conversation entry', {max: 3000}), source: text(body.source, 'Source reference', {required: false, max: 1000}), assigneeId};
+        store.insert(user.companyId, 'conversationEntries', entry);
+        return json(response, 201, {entry});
       }
       const qmatch = path.match(/^\/api\/questions\/([^/]+)(?:\/(launch|close|reopen|decisions|check-ins))?$/);
       if(qmatch) {

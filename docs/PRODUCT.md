@@ -1,4 +1,4 @@
-# Quick View product contract · v0.2
+# Quick View product contract · v0.3
 
 The buyer is the SME owner. The entry point is a specific management question or direction. The service helps the organization answer with named, dated evidence and helps the owner keep a decision connected to its subsequent action and reported result.
 
@@ -29,7 +29,11 @@ Live/closed operations questions and their evidence are shared across the compan
 | Action | Decision/question link, title, expected result, responsible person, optional deadline, current reported/accepted state, version and immutable updates with author/time/note/source and reassignment context. |
 | Membership event | Manager actor/time and prior/current active state for access changes. Historical authors remain identifiable. |
 
-Responses are append-only. Follow-ups increment the request version, so the previous response stops counting as current. It stays visible as earlier context. An earlier blocked/at-risk statement remains surfaced as an earlier concern while the new answer is pending; the service does not quietly turn it into a positive assessment.
+Responses are append-only. **Request clarification or reassign** increments the request version, so the previous response stops counting as current. It stays visible as earlier context. An earlier blocked/at-risk statement remains surfaced as an earlier concern while the new answer is pending; the service does not quietly turn it into a positive assessment.
+
+The separate v0.3 **Ask a follow-up** action creates a new assigned conversation question linked to an exact recorded answer or contribution. It does not invalidate the original operational response. Outstanding conversation questions are counted separately; **Reply** appends a named answer without changing operational status, freshness or KPI coverage. Managers authorize these assignments; the assignee or manager can reply even after the main question closes. Inactive recipients remain identifiable rather than losing their outstanding questions.
+
+**Add detail** and **Flag a concern** create immutable contributions with an exact parent, author, timestamp and optional source. **Helpful** appends a per-person feedback state; repeated identical submissions are idempotent. Helpful is not verification, approval or completion. Concerns remain recorded after replies and votes. Conversation dates are posting times, not asserted observation times. Updating the original answer preserves older threads on their exact historical response.
 
 Stale draft, response, action and applicable membership writes return a conflict. The interface offers current-record recovery while retaining the user's draft. It does not silently overwrite concurrent work.
 

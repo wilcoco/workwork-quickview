@@ -12,6 +12,10 @@ function frontend({ forms = [], planContainer = { innerHTML: '' } } = {}) {
   // deliberately remains pending and cannot reach the network.
   const context = vm.createContext({
     URLSearchParams,
+    FormData: class {
+      constructor(form) { this.values = Object.entries(form.elements || {}).map(([name, element]) => [name, element.value || '']); }
+      [Symbol.iterator]() { return this.values[Symbol.iterator](); }
+    },
     location: { hash: '', pathname: '/', search: '', origin: 'https://synthetic.example.test' },
     document: {
       addEventListener() {},
@@ -29,7 +33,8 @@ function frontend({ forms = [], planContainer = { innerHTML: '' } } = {}) {
     setInterval: () => 0,
   });
   vm.runInContext(`${frontendSource}\n;globalThis.acceptance = {
-    restoreForm, questionPage,
+    restoreForm, snapshotForm, questionPage, requestsPage, responseConversation, threadEntries, workspaceKey, retainConversationDraft, resetConversationUI,
+    draft(targetId, kind) { return conversationDrafts.get(conversationDraftKey(targetId, kind)); },
     load(nextState, questionId) { state = nextState; selected = questionId; }
   };`, context, { filename: 'public/app.js', timeout: 1000 });
   return context.acceptance;
@@ -50,7 +55,7 @@ test('draft recovery keeps surviving request lineage and restores deleted cards 
     ],
   }, 'this-question');
   const saved = {
-    kind: 'plan', id: 'this-question', data: { context: 'My unsaved scope edit' },
+    workspace: app.workspaceKey(), kind: 'plan', id: 'this-question', data: { context: 'My unsaved scope edit' },
     plan: [
       { id: 'surviving-request', title: 'Retained area', role: 'Quality', prompt: 'Keep the current lineage.', assigneeId: 'manager' },
       { id: 'deleted-request', title: 'My removed-card edit', role: 'Production', prompt: 'Preserve this unsaved question.', assigneeId: 'manager' },
@@ -117,4 +122,93 @@ test('review-needed counter includes distinct aging and unanswered requests with
   assert.equal(briefing.total, 4);
   assert.equal(briefing.answered, 3);
   assert.equal(count, 3, 'Unknown/undated, aging, and unanswered each contribute once; recent evidence does not');
+});
+
+
+test('conversation drafts stay tied to the exact parent, contribution kind and workspace', () => {
+  const app = frontend();
+  const user = { id: 'member', role: 'member' };
+  app.load({ company: { id: 'company-a' }, user }, null);
+  const form = (target, kind, value) => ({
+    dataset: { form: 'conversation', target, entryKind: kind },
+    elements: { text: { value }, source: { value: 'Synthetic source reference' } },
+  });
+  app.retainConversationDraft(form('old-response', 'concern', 'Concern on the exact old answer'));
+  app.retainConversationDraft(form('new-response', 'context', 'Detail on the new answer'));
+  app.retainConversationDraft(form('old-response', 'question', 'A separate assigned follow-up'));
+  assert.equal(app.draft('old-response', 'concern').text, 'Concern on the exact old answer');
+  assert.equal(app.draft('old-response', 'question').text, 'A separate assigned follow-up');
+  assert.equal(app.draft('new-response', 'context').text, 'Detail on the new answer');
+  app.load({ company: { id: 'company-b' }, user }, null);
+  assert.equal(app.draft('old-response', 'concern'), undefined, 'Another company cannot reopen these drafts');
+  app.load({ company: { id: 'company-a' }, user }, null);
+  app.resetConversationUI();
+  assert.equal(app.draft('old-response', 'concern'), undefined, 'Session/workspace reset discards the prior draft cache');
+});
+
+test('form recovery retains conversation text but refuses another company or account', () => {
+  const form = {
+    dataset: { form: 'conversation', id: 'question', target: 'source-answer', entryKind: 'concern' },
+    elements: { text: { tagName: 'TEXTAREA', value: 'My unsaved concern <not markup>' }, source: { tagName: 'INPUT', value: 'Source A' } },
+    querySelectorAll() { return []; },
+  };
+  const app = frontend({ forms: [form] });
+  app.load({ company: { id: 'company-a' }, user: { id: 'member-a' } }, null);
+  const saved = app.snapshotForm(form);
+  form.elements.text.value = '';
+  assert.equal(app.restoreForm(saved), true);
+  assert.equal(form.elements.text.value, 'My unsaved concern <not markup>');
+  form.elements.text.value = 'Other workspace draft';
+  app.load({ company: { id: 'company-b' }, user: { id: 'member-a' } }, null);
+  assert.equal(app.restoreForm(saved), false);
+  assert.equal(form.elements.text.value, 'Other workspace draft');
+  app.load({ company: { id: 'company-a' }, user: { id: 'member-b' } }, null);
+  assert.equal(app.restoreForm(saved), false, 'A different account in the same company cannot inherit the draft');
+});
+
+function conversationFixture() {
+  const response = { id: 'original-answer', questionId: 'closed-question', requestId: 'original-request', text: 'Original evidence', authorId: 'member', authorName: 'Synthetic member', createdAt: '2026-09-27T08:00:00Z' };
+  const followup = { id: 'followup', parentId: response.id, questionId: response.questionId, requestId: response.requestId, kind: 'question', text: 'Confirm the remaining approval', assigneeId: 'member', authorId: 'manager', authorName: 'Synthetic manager', createdAt: '2026-09-27T09:00:00Z' };
+  return {
+    company: { id: 'company-a' }, user: { id: 'member', role: 'member' },
+    members: [{ id: 'member', name: 'Synthetic member', active: true }, { id: 'manager', name: 'Synthetic manager', active: true }],
+    questions: [{ id: 'closed-question', text: 'Closed owner question', status: 'closed' }],
+    requests: [{ id: 'original-request', questionId: response.questionId, assigneeId: 'member' }],
+    responses: [response, { ...response, id: 'later-answer', text: 'Updated evidence' }],
+    conversationEntries: [followup],
+    conversations: { 'closed-question': { nodes: [], links: [], openQuestions: [followup], concerns: [], helpfulByTarget: { 'original-answer': { count: 1, userIds: ['member'] } } } },
+    actions: [], briefings: [],
+  };
+}
+
+test('historical response keeps its exact conversation and Helpful state after a newer answer', () => {
+  const app = frontend(), fixture = conversationFixture();
+  app.load(fixture, null);
+  const oldThread = app.responseConversation(fixture.responses[0]);
+  const newThread = app.responseConversation(fixture.responses[1]);
+  assert.match(oldThread, /Conversation · 1 contribution/);
+  assert.match(oldThread, /Confirm the remaining approval/);
+  assert.match(oldThread, /aria-pressed="true"/);
+  assert.doesNotMatch(newThread, /Confirm the remaining approval/);
+  assert.doesNotMatch(newThread, /Conversation · 1 contribution/);
+  assert.match(newThread, /aria-pressed="false"/);
+  assert.doesNotMatch(oldThread, />Ask a follow-up<\/button>/, 'Closed owner question cannot receive a new assigned follow-up');
+});
+
+test('closed-root follow-up remains replyable in My requests and inactive assignment is visible', () => {
+  const app = frontend(), fixture = conversationFixture();
+  app.load(fixture, null);
+  let page = app.requestsPage();
+  assert.match(page, /Confirm the remaining approval/);
+  assert.match(page, /Parent question closed/);
+  assert.match(page, /data-target="followup" data-kind="answer">Reply/);
+  fixture.members[0].active = false;
+  fixture.user = { id: 'manager', role: 'manager' };
+  app.load(fixture, null);
+  page = app.requestsPage();
+  assert.match(page, /Inactive assignee/);
+  assert.match(page, /data-target="followup" data-kind="answer">Reply/);
+  fixture.user = { id: 'different-member', role: 'member' };
+  app.load(fixture, null);
+  assert.doesNotMatch(app.requestsPage(), /Confirm the remaining approval/);
 });

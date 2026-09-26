@@ -25,7 +25,15 @@ Invite people under **Team** using a private invitation link. A manager can deac
 
 Company members share live/closed questions and evidence; draft plans are manager-only. This permission model is intended for shared operations questions, not confidential executive topics. The first signup is the company's manager. One company membership per email is supported; existing Workwork accounts are separate.
 
-## Implemented in v0.2
+## New in v0.3: conversations attached to exact answers
+
+Each recorded response offers **Helpful**, **Add detail**, **Flag a concern**, and manager-authorized **Ask a follow-up**. Expand **Conversation** to see the original context, named contributions, sources and replies. No relationship tagging or graph editing is required.
+
+Assigned follow-ups appear separately in **My requests**, including unanswered follow-ups whose main question has closed. A reply answers that follow-up; details, concerns and helpful feedback do not. Earlier answer threads remain attached to their original response when a newer update arrives. Written concerns remain visible and are not cleared by popularity or later replies.
+
+The underlying question, answer, context, concern, feedback, decision and action records form a typed relationship graph. These links describe discourse and provenance, not verified causation or a mined operating process. See the [conversation design and academic foundations](docs/CONVERSATION-DESIGN.md).
+
+## Existing foundation retained from v0.2
 
 - Multi-company authentication, scrypt password hashes, persistent sessions, manager/member permissions, invitation links, member deactivation/reactivation and session revocation.
 - English/Korean guided drafts for delivery, quality, readiness, cost and general management questions, with owner-reviewed breakdowns and explicit launch.
@@ -90,4 +98,6 @@ Commercial rollout needs observed repeat use and buyer commitment, plus operatio
 - [Pilot and commercial plan](docs/PILOT-AND-COMMERCIAL-PLAN.md): the initial workflow, proposed validation gates and packaging hypotheses.
 - [Product contract](docs/PRODUCT.md): implemented behavior and interpretation boundaries.
 - [v0.2 implementation contract](docs/V02-CONTRACT.md): API and data agreement.
+- [v0.3 conversation contract](docs/V03-CONTRACT.md): exact-parent contributions and feedback.
+- [Conversation design](docs/CONVERSATION-DESIGN.md): simple interaction, relationship meaning and academic foundations.
 - [Deployment](docs/DEPLOYMENT.md) and [verification](docs/VERIFICATION.md): environment and completed checks.

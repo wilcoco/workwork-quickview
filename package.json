@@ -1,10 +1,10 @@
 {
-  "name": "workwork-quickview", "version": "0.2.0", "private": true, "type": "module",
+  "name": "workwork-quickview", "version": "0.3.0", "private": true, "type": "module",
   "engines": { "node": ">=22.14.0" },
   "scripts": {
     "start": "node --env-file-if-exists=.env server/app.mjs",
     "test": "node --test tests/*.test.mjs",
     "backup": "node scripts/backup.mjs",
-    "check": "node --check scripts/backup.mjs && node --check server/app.mjs && node --check server/planner.mjs && node --check server/briefing.mjs && node --check server/auth.mjs && node --check server/store.mjs && node --check public/app.js"
+    "check": "node --check scripts/backup.mjs && node --check server/app.mjs && node --check server/planner.mjs && node --check server/briefing.mjs && node --check server/conversation.mjs && node --check server/auth.mjs && node --check server/store.mjs && node --check public/app.js"
   }
 }
